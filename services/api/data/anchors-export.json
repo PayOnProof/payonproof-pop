@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-02-25T19:20:22.448Z",
+  "generatedAt": "2026-06-27T23:17:23.607Z",
   "source": "https://anchors.stellar.org/#verified-domains",
   "strategy": "directory-domain-sep",
   "homeUrl": "https://anchors.stellar.org/",
@@ -96,9 +96,9 @@
   ],
   "diagnostics": {
     "domainsTotal": 89,
-    "skippedNoSep": 22,
+    "skippedNoSep": 23,
     "skippedNoAssets": 0,
-    "failedToml": 61
+    "failedToml": 59
   },
   "anchors": [
     {
@@ -174,49 +174,49 @@
       "active": true
     },
     {
-      "name": "Grupo Anchor S.A.",
-      "domain": "home.anclap.com",
+      "name": "ZEAM LIMITED",
+      "domain": "zeam.money",
       "countries": [
         "ZZ"
       ],
       "currencies": [
-        "ARS"
+        "USDC"
       ],
       "type": "on-ramp",
       "active": true
     },
     {
-      "name": "Grupo Anchor S.A.",
-      "domain": "home.anclap.com",
+      "name": "ZEAM LIMITED",
+      "domain": "zeam.money",
       "countries": [
         "ZZ"
       ],
       "currencies": [
-        "PEN"
+        "NATIVE"
       ],
       "type": "on-ramp",
       "active": true
     },
     {
-      "name": "Grupo Anchor S.A.",
-      "domain": "home.anclap.com",
+      "name": "ZEAM LIMITED",
+      "domain": "zeam.money",
       "countries": [
         "ZZ"
       ],
       "currencies": [
-        "ARS"
+        "USDC"
       ],
       "type": "off-ramp",
       "active": true
     },
     {
-      "name": "Grupo Anchor S.A.",
-      "domain": "home.anclap.com",
+      "name": "ZEAM LIMITED",
+      "domain": "zeam.money",
       "countries": [
         "ZZ"
       ],
       "currencies": [
-        "PEN"
+        "NATIVE"
       ],
       "type": "off-ramp",
       "active": true
@@ -294,63 +294,73 @@
       "active": true
     },
     {
-      "name": "nTokens Serviços Digitais Ltda",
-      "domain": "ntokens.com",
+      "name": "ZEAM LIMITED",
+      "domain": "mint.zeam.money",
       "countries": [
         "ZZ"
       ],
       "currencies": [
-        "BRL"
+        "USDC"
       ],
       "type": "on-ramp",
       "active": true
     },
     {
-      "name": "nTokens Serviços Digitais Ltda",
-      "domain": "ntokens.com",
+      "name": "ZEAM LIMITED",
+      "domain": "mint.zeam.money",
       "countries": [
         "ZZ"
       ],
       "currencies": [
-        "BRL"
+        "NATIVE"
+      ],
+      "type": "on-ramp",
+      "active": true
+    },
+    {
+      "name": "ZEAM LIMITED",
+      "domain": "mint.zeam.money",
+      "countries": [
+        "ZZ"
+      ],
+      "currencies": [
+        "USDC"
       ],
       "type": "off-ramp",
       "active": true
     },
     {
-      "name": "Anclap",
-      "domain": "home.anclap.com",
+      "name": "ZEAM LIMITED",
+      "domain": "mint.zeam.money",
       "countries": [
-        "AR",
-        "CL",
-        "CO",
-        "MX",
-        "PE"
+        "ZZ"
       ],
       "currencies": [
-        "ARS",
-        "USD",
-        "USDC",
-        "XLM"
+        "NATIVE"
+      ],
+      "type": "off-ramp",
+      "active": true
+    },
+    {
+      "name": "nTokens Serviços Digitais Ltda",
+      "domain": "ntokens.com",
+      "countries": [
+        "ZZ"
+      ],
+      "currencies": [
+        "BRL"
       ],
       "type": "on-ramp",
       "active": true
     },
     {
-      "name": "Anclap",
-      "domain": "home.anclap.com",
+      "name": "nTokens Serviços Digitais Ltda",
+      "domain": "ntokens.com",
       "countries": [
-        "AR",
-        "CL",
-        "CO",
-        "MX",
-        "PE"
+        "ZZ"
       ],
       "currencies": [
-        "ARS",
-        "USD",
-        "USDC",
-        "XLM"
+        "BRL"
       ],
       "type": "off-ramp",
       "active": true
@@ -829,6 +839,40 @@
       "currencies": [
         "EUR",
         "EURC"
+      ],
+      "type": "off-ramp",
+      "active": true
+    },
+    {
+      "name": "Zeam",
+      "domain": "mint.zeam.money",
+      "countries": [
+        "CD",
+        "MW",
+        "ZA",
+        "ZM",
+        "ZW"
+      ],
+      "currencies": [
+        "USDC",
+        "XLM"
+      ],
+      "type": "on-ramp",
+      "active": true
+    },
+    {
+      "name": "Zeam",
+      "domain": "mint.zeam.money",
+      "countries": [
+        "CD",
+        "MW",
+        "ZA",
+        "ZM",
+        "ZW"
+      ],
+      "currencies": [
+        "USDC",
+        "XLM"
       ],
       "type": "off-ramp",
       "active": true
