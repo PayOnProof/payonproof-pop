@@ -1,6 +1,14 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { readJsonBody } from "../../lib/http.js";
 import { applyCors, handleCorsPreflight } from "../../lib/cors.js";
+import { readJsonBody } from "../../lib/http.js";
+import {
+  clearAdminSessionCookie,
+  createAdminSessionToken,
+  getAdminSession,
+  requireAdminSession,
+  setAdminSessionCookie,
+  verifyAdminCredentials,
+} from "../../lib/admin-auth.js";
 import {
   deleteAnchor,
   listAnchors,
@@ -8,12 +16,11 @@ import {
   updateAnchorCapabilities,
   upsertAnchorsCatalog,
 } from "../../lib/repositories/anchors-catalog.js";
+import type { AnchorCatalogEntry } from "../../lib/remittances/compare/types.js";
+import type { AnchorCatalogImportRow } from "../../lib/stellar/anchor-directory.js";
 import { resolveAnchorCapabilities } from "../../lib/stellar/capabilities.js";
 import { discoverAnchorFromDomain } from "../../lib/stellar/sep1.js";
 import { fetchSep24Info } from "../../lib/stellar/sep24.js";
-import type { AnchorCatalogImportRow } from "../../lib/stellar/anchor-directory.js";
-import type { AnchorCatalogEntry } from "../../lib/remittances/compare/types.js";
-import { requireAdminSession } from "../../lib/admin-auth.js";
 
 type AdminAction =
   | "discover_domain"
@@ -22,6 +29,12 @@ type AdminAction =
   | "delete"
   | "refresh"
   | "refresh_all";
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
 
 function asString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
@@ -55,6 +68,15 @@ function parseAction(value: unknown): AdminAction | "" {
     default:
       return "";
   }
+}
+
+function getAdminRoute(req: VercelRequest): string {
+  const dynamic = req.query?.admin;
+  if (Array.isArray(dynamic)) return dynamic[0] ?? "";
+  if (typeof dynamic === "string") return dynamic;
+
+  const pathname = (req.url ?? "").split("?")[0] ?? "";
+  return pathname.replace(/^\/api\/admin\/?/, "").split("/")[0] ?? "";
 }
 
 function getQueryParam(req: VercelRequest, key: string): string {
@@ -120,7 +142,13 @@ function extractAssetRows(
   const root = info as Record<string, unknown>;
   const section = root[sectionName];
   if (!section || typeof section !== "object") return [];
-  return [...new Set(Object.keys(section as Record<string, unknown>).map(normalizeAssetCode).filter(Boolean))];
+  return [
+    ...new Set(
+      Object.keys(section as Record<string, unknown>)
+        .map(normalizeAssetCode)
+        .filter(Boolean)
+    ),
+  ];
 }
 
 function buildImportRows(input: {
@@ -131,9 +159,7 @@ function buildImportRows(input: {
   withdrawAssets: string[];
   active: boolean;
 }): AnchorCatalogImportRow[] {
-  const countries = input.countries
-    .map(normalizeIso2)
-    .filter(Boolean);
+  const countries = input.countries.map(normalizeIso2).filter(Boolean);
   const rows: AnchorCatalogImportRow[] = [];
 
   for (const country of countries) {
@@ -215,12 +241,16 @@ async function handleDiscover(body: Record<string, unknown>) {
   const sep1 = await discoverAnchorFromDomain({ domain });
   let sep24Info: unknown;
   if (sep1.transferServerSep24) {
-    sep24Info = (await fetchSep24Info({
-      transferServerSep24: sep1.transferServerSep24,
-    })).info;
+    sep24Info = (
+      await fetchSep24Info({
+        transferServerSep24: sep1.transferServerSep24,
+      })
+    ).info;
   }
 
-  const requestedAssets = asStringArray(body.currencies).map(normalizeAssetCode).filter(Boolean);
+  const requestedAssets = asStringArray(body.currencies)
+    .map(normalizeAssetCode)
+    .filter(Boolean);
   const depositAssets = extractAssetRows(sep24Info, "deposit");
   const withdrawAssets = extractAssetRows(sep24Info, "withdraw");
   const filteredDeposit = requestedAssets.length
@@ -229,15 +259,13 @@ async function handleDiscover(body: Record<string, unknown>) {
   const filteredWithdraw = requestedAssets.length
     ? withdrawAssets.filter((asset) => requestedAssets.includes(asset))
     : withdrawAssets;
-  const countries = asStringArray(body.countries);
-  const active = body.active !== false;
   const rows = buildImportRows({
     domain: sep1.domain,
     name: pickName(sep24Info, sep1.domain),
-    countries,
+    countries: asStringArray(body.countries),
     depositAssets: filteredDeposit,
     withdrawAssets: filteredWithdraw,
-    active,
+    active: body.active !== false,
   });
 
   const apply = body.apply === true;
@@ -273,7 +301,9 @@ async function handleUpsert(body: Record<string, unknown>) {
   const domain = normalizeDomain(asString(body.domain));
   const name = asString(body.name) || domain;
   const countries = asStringArray(body.countries);
-  const currencies = asStringArray(body.currencies).map(normalizeAssetCode).filter(Boolean);
+  const currencies = asStringArray(body.currencies)
+    .map(normalizeAssetCode)
+    .filter(Boolean);
   const types = asStringArray(body.types);
   const active = body.active !== false;
   if (!domain || !name || countries.length === 0 || currencies.length === 0) {
@@ -292,10 +322,45 @@ async function handleUpsert(body: Record<string, unknown>) {
   return { status: "ok", action: "upsert", written, rows };
 }
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (handleCorsPreflight(req, res, ["GET", "POST", "OPTIONS"])) return;
-  applyCors(req, res, ["GET", "POST", "OPTIONS"]);
+async function handleLogin(req: VercelRequest, res: VercelResponse) {
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "Method not allowed" });
+  }
+  const parsed = readJsonBody(req);
+  if (!parsed.ok) return res.status(400).json({ error: "Invalid request body" });
 
+  const body = asRecord(parsed.value);
+  const email = asString(body.email);
+  const password = asString(body.password);
+  if (!verifyAdminCredentials({ email, password })) {
+    return res.status(401).json({ error: "Invalid admin credentials" });
+  }
+
+  const token = createAdminSessionToken(email);
+  setAdminSessionCookie(res, token);
+  return res.status(200).json({ status: "ok", token, user: { email } });
+}
+
+function handleSession(req: VercelRequest, res: VercelResponse) {
+  if (req.method !== "GET") {
+    return res.status(405).json({ error: "Method not allowed" });
+  }
+  const session = getAdminSession(req);
+  return res.status(200).json({
+    authenticated: Boolean(session),
+    user: session ? { email: session.email } : null,
+  });
+}
+
+function handleLogout(req: VercelRequest, res: VercelResponse) {
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "Method not allowed" });
+  }
+  clearAdminSessionCookie(res);
+  return res.status(200).json({ status: "ok" });
+}
+
+async function handleAnchors(req: VercelRequest, res: VercelResponse) {
   try {
     requireAdminSession(req);
   } catch {
@@ -316,10 +381,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const filtered = anchors.filter((anchor) => {
       if (country && anchor.country !== country) return false;
       if (domain && !anchor.domain.includes(domain)) return false;
-      if ((network === "mainnet" || network === "testnet") && anchor.network !== network) {
+      if (
+        (network === "mainnet" || network === "testnet") &&
+        anchor.network !== network
+      ) {
         return false;
       }
-      if ((type === "on-ramp" || type === "off-ramp") && anchor.type !== type) return false;
+      if ((type === "on-ramp" || type === "off-ramp") && anchor.type !== type) {
+        return false;
+      }
       if (operational === "true" && !anchor.capabilities.operational) return false;
       if (operational === "false" && anchor.capabilities.operational) return false;
       if (active === "true" && !anchor.active) return false;
@@ -336,7 +406,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const parsed = readJsonBody(req);
   if (!parsed.ok) return res.status(400).json({ error: "Invalid request body" });
 
-  const body = parsed.value;
+  const body = asRecord(parsed.value);
   const action = parseAction(body.action);
   if (!action) {
     return res.status(400).json({
@@ -356,7 +426,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const id = asString(body.id);
       if (!id) return res.status(400).json({ error: "Missing field: id" });
       await setAnchorActive({ id, active: body.active !== false });
-      return res.status(200).json({ status: "ok", action, id, active: body.active !== false });
+      return res
+        .status(200)
+        .json({ status: "ok", action, id, active: body.active !== false });
     }
     if (action === "delete") {
       const id = asString(body.id);
@@ -373,7 +445,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const id = asString(body.id);
       const anchor = anchors.find((item) => item.id === id);
       if (!anchor) return res.status(404).json({ error: "Anchor not found" });
-      return res.status(200).json({ status: "ok", action, result: await refreshAnchor(anchor) });
+      return res
+        .status(200)
+        .json({ status: "ok", action, result: await refreshAnchor(anchor) });
     }
 
     const limit =
@@ -393,9 +467,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
       }
     }
-    return res.status(200).json({ status: "ok", action, processed: results.length, results });
+    return res
+      .status(200)
+      .json({ status: "ok", action, processed: results.length, results });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     return res.status(502).json({ status: "error", action, error: message });
   }
+}
+
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  if (handleCorsPreflight(req, res, ["GET", "POST", "OPTIONS"])) return;
+  applyCors(req, res, ["GET", "POST", "OPTIONS"]);
+
+  const route = getAdminRoute(req);
+  if (route === "login") return handleLogin(req, res);
+  if (route === "session") return handleSession(req, res);
+  if (route === "logout") return handleLogout(req, res);
+  if (route === "anchors") return handleAnchors(req, res);
+
+  return res.status(404).json({ error: "Admin route not found" });
 }
