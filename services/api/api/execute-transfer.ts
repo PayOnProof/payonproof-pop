@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
-import { Keypair, TransactionBuilder } from "@stellar/stellar-sdk";
+import { Asset, Horizon, Keypair, Operation, TransactionBuilder } from "@stellar/stellar-sdk";
 import { readJsonBody } from "../lib/http.js";
 import { listActiveAnchors } from "../lib/repositories/anchors-catalog.js";
 import { getAnchorCallbackEvent } from "../lib/repositories/anchor-events.js";
@@ -17,7 +17,7 @@ import { applyCors, handleCorsPreflight } from "../lib/cors.js";
  *   Returns SEP-10 challenge payloads for selected route anchors.
  *
  * phase=authorize:
- *   Accepts: { phase, prepared, signatures }
+ *   Accepts: { phase, prepared, signatures, trustlineSignature? }
  *   Exchanges signed challenges for SEP-10 JWTs and starts SEP-24 interactive flows.
  *
  * phase=status:
@@ -60,6 +60,15 @@ interface PreparedTransferPayload {
   amount: number;
   createdAt: string;
   anchors: PreparedAnchorAuth[];
+  trustline?: PreparedTrustline;
+}
+
+interface PreparedTrustline {
+  assetCode: string;
+  assetIssuer: string;
+  network: "mainnet" | "testnet";
+  networkPassphrase: string;
+  transactionXdr: string;
 }
 
 interface Sep24StatusHandle {
@@ -120,6 +129,99 @@ function isHttpsUrl(value: string): boolean {
 
 function normalizeBaseUrl(url: string): string {
   return url.trim().replace(/\/+$/, "");
+}
+
+function networkPassphraseForNetwork(network?: "mainnet" | "testnet"): string {
+  if (network === "testnet") return "Test SDF Network ; September 2015";
+  return "Public Global Stellar Network ; September 2015";
+}
+
+function horizonServerForNetwork(network?: "mainnet" | "testnet") {
+  const horizonUrl =
+    network === "testnet"
+      ? "https://horizon-testnet.stellar.org"
+      : getStellarConfig().horizonUrl;
+  return new Horizon.Server(horizonUrl);
+}
+
+function resolveKnownAssetIssuer(input: {
+  domain: string;
+  network?: "mainnet" | "testnet";
+  assetCode: string;
+}): string | undefined {
+  const assetCode = input.assetCode.trim().toUpperCase();
+  const domain = toHostname(input.domain);
+  if (
+    input.network === "testnet" &&
+    domain === "testanchor.stellar.org" &&
+    assetCode === "USDC"
+  ) {
+    return "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
+  }
+  return undefined;
+}
+
+function accountHasTrustline(
+  account: Horizon.AccountResponse,
+  assetCode: string,
+  assetIssuer: string
+): boolean {
+  return account.balances.some((balance) => {
+    if (
+      balance.asset_type !== "credit_alphanum4" &&
+      balance.asset_type !== "credit_alphanum12"
+    ) {
+      return false;
+    }
+    return (
+      balance.asset_code === assetCode &&
+      balance.asset_issuer === assetIssuer
+    );
+  });
+}
+
+async function prepareTrustlineIfMissing(input: {
+  account: string;
+  assetCode: string;
+  assetIssuer?: string;
+  network?: "mainnet" | "testnet";
+}): Promise<PreparedTrustline | undefined> {
+  const assetCode = input.assetCode.trim().toUpperCase();
+  const assetIssuer = input.assetIssuer?.trim();
+  if (!assetIssuer || assetCode === "XLM") return undefined;
+
+  const server = horizonServerForNetwork(input.network);
+  const source = await server.loadAccount(input.account);
+  if (accountHasTrustline(source, assetCode, assetIssuer)) return undefined;
+
+  const network = input.network === "testnet" ? "testnet" : "mainnet";
+  const networkPassphrase = networkPassphraseForNetwork(network);
+  const asset = new Asset(assetCode, assetIssuer);
+  const transaction = new TransactionBuilder(source, {
+    fee: "100",
+    networkPassphrase,
+  })
+    .addOperation(Operation.changeTrust({ asset }))
+    .setTimeout(300)
+    .build();
+
+  return {
+    assetCode,
+    assetIssuer,
+    network,
+    networkPassphrase,
+    transactionXdr: transaction.toEnvelope().toXDR("base64"),
+  };
+}
+
+async function submitSignedTransaction(input: {
+  signedXdr: string;
+  network?: "mainnet" | "testnet";
+  networkPassphrase: string;
+}) {
+  const tx = TransactionBuilder.fromXDR(input.signedXdr, input.networkPassphrase);
+  const server = horizonServerForNetwork(input.network);
+  return server.submitTransaction(tx);
 }
 
 function resolveAnchorDomainForExecution(domain: string): string {
@@ -930,6 +1032,13 @@ async function prepareAnchorAuth(input: {
       domain: executionDomain,
     });
   }
+  if (!effectiveAssetIssuer) {
+    effectiveAssetIssuer = resolveKnownAssetIssuer({
+      domain: executionDomain,
+      network: input.anchor.network,
+      assetCode: effectiveAssetCode,
+    });
+  }
 
   const challenge = await fetchSep10Challenge({
     webAuthEndpoint,
@@ -1093,6 +1202,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             : undefined,
         }),
       ]);
+      const destinationPrepared = preparedAnchors.find(
+        (anchor) => anchor.role === "destination"
+      );
+      const trustline = destinationPrepared
+        ? await prepareTrustlineIfMissing({
+            account: senderAccount,
+            assetCode: destinationPrepared.assetCode,
+            assetIssuer: destinationPrepared.assetIssuer,
+            network: destinationPrepared.network,
+          })
+        : undefined;
 
       const prepared: PreparedTransferPayload = {
         transactionId,
@@ -1101,6 +1221,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         amount,
         createdAt: new Date().toISOString(),
         anchors: preparedAnchors,
+        trustline,
       };
 
       return res.status(200).json({
@@ -1187,12 +1308,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const prepared = parsed.value.prepared as PreparedTransferPayload | undefined;
     const signatures = parsed.value.signatures as Record<string, string> | undefined;
+    const trustlineSignature = asString(parsed.value.trustlineSignature);
 
     if (!prepared || !prepared.transactionId || !Array.isArray(prepared.anchors)) {
       return res.status(400).json({ error: "Missing field: prepared" });
     }
     if (!signatures || typeof signatures !== "object") {
       return res.status(400).json({ error: "Missing field: signatures" });
+    }
+    if (prepared.trustline) {
+      if (!trustlineSignature) {
+        return res.status(400).json({
+          error: `Missing signed trustline transaction for ${prepared.trustline.assetCode}.`,
+        });
+      }
+      await submitSignedTransaction({
+        signedXdr: trustlineSignature,
+        network: prepared.trustline.network,
+        networkPassphrase: prepared.trustline.networkPassphrase,
+      });
     }
 
     const interactiveByRole: Record<
