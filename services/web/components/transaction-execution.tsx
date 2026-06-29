@@ -59,6 +59,13 @@ export function TransactionExecution({
         amount,
         senderAccount: walletAddress,
       });
+      const trustlineSignature = prepared.trustline
+        ? await signFreighterTransaction({
+            transactionXdr: prepared.trustline.transactionXdr,
+            networkPassphrase: prepared.trustline.networkPassphrase,
+            address: walletAddress,
+          })
+        : undefined;
 
       const signatures = {} as Record<"origin" | "destination", string>;
       const signatureByChallenge = new Map<string, string>();
@@ -93,6 +100,7 @@ export function TransactionExecution({
       const authorized = await authorizeTransfer({
         prepared,
         signatures,
+        trustlineSignature,
       });
 
       const tx: Transaction = {

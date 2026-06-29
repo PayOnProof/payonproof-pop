@@ -93,6 +93,13 @@ export interface PreparedTransfer {
     challengeXdr: string;
     networkPassphrase: string;
   }>;
+  trustline?: {
+    assetCode: string;
+    assetIssuer: string;
+    network: "mainnet" | "testnet";
+    networkPassphrase: string;
+    transactionXdr: string;
+  };
 }
 
 export async function prepareTransfer(params: {
@@ -128,6 +135,7 @@ export async function prepareTransfer(params: {
 export async function authorizeTransfer(params: {
   prepared: PreparedTransfer;
   signatures: Record<"origin" | "destination", string>;
+  trustlineSignature?: string;
 }): Promise<{
     transaction: {
       id: string;
@@ -163,6 +171,7 @@ export async function authorizeTransfer(params: {
       phase: "authorize",
       prepared: params.prepared,
       signatures: params.signatures,
+      trustlineSignature: params.trustlineSignature,
     }),
   });
 
