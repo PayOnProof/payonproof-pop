@@ -1,4 +1,5 @@
 import { resolveAnchorCapabilities } from "../../stellar/capabilities.js";
+import { fetchSep24Info } from "../../stellar/sep24.js";
 import { scoreRoutes } from "./scoring.js";
 import {
   getAnchorsForCorridor,
@@ -22,8 +23,41 @@ function matchesSepAssetKey(key: string, assetCode: string): boolean {
   const normalizedAsset = assetCode.trim().toUpperCase();
   return (
     normalizedKey === normalizedAsset ||
-    normalizedKey.startsWith(`${normalizedAsset}:`)
+    normalizedKey.startsWith(`${normalizedAsset}:`) ||
+    (normalizedAsset === "XLM" && normalizedKey === "NATIVE")
   );
+}
+
+function toNumber(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
+}
+
+function extractSep24AmountLimits(
+  sep24Info: unknown,
+  assetCode: string,
+  role: "origin" | "destination"
+): { min?: number; max?: number } | undefined {
+  if (!sep24Info || typeof sep24Info !== "object") return undefined;
+  const root = sep24Info as Record<string, unknown>;
+  const sectionName = role === "origin" ? "deposit" : "withdraw";
+  const section = root[sectionName];
+  if (!section || typeof section !== "object") return undefined;
+  const assets = section as Record<string, unknown>;
+  const key = Object.keys(assets).find((candidate) =>
+    matchesSepAssetKey(candidate, assetCode)
+  );
+  const config = key ? assets[key] : undefined;
+  if (!config || typeof config !== "object") return undefined;
+  const record = config as Record<string, unknown>;
+  return {
+    min: toNumber(record.min_amount),
+    max: toNumber(record.max_amount),
+  };
 }
 
 function isSep24AssetSupported(
@@ -80,6 +114,23 @@ async function resolveAnchorRuntime(anchor: AnchorCatalogEntry): Promise<AnchorR
     Date.now() - lastCheckedAtMs > CAPABILITY_REFRESH_MS;
 
   if (!shouldRefresh) {
+    let amountLimits: AnchorRuntime["amountLimits"];
+    if (anchor.capabilities.transferServerSep24) {
+      try {
+        const sep24 = await fetchSep24Info({
+          transferServerSep24: anchor.capabilities.transferServerSep24,
+          timeoutMs: 4000,
+        });
+        amountLimits = extractSep24AmountLimits(
+          sep24.info,
+          anchor.currency,
+          anchor.type === "on-ramp" ? "origin" : "destination"
+        );
+      } catch {
+        // Amount limits are advisory for route filtering; stale capability data can still be used.
+      }
+    }
+
     return {
       catalog: anchor,
       sep: {
@@ -100,6 +151,7 @@ async function resolveAnchorRuntime(anchor: AnchorCatalogEntry): Promise<AnchorR
         percent: anchor.capabilities.feePercent,
         source: anchor.capabilities.feeSource ?? "default",
       },
+      amountLimits,
     };
   }
 
@@ -109,6 +161,11 @@ async function resolveAnchorRuntime(anchor: AnchorCatalogEntry): Promise<AnchorR
       assetCode: anchor.currency,
     });
     const sep24AssetSupported = isSep24AssetSupported(
+      resolved.raw?.sep24Info,
+      anchor.currency,
+      anchor.type === "on-ramp" ? "origin" : "destination"
+    );
+    const amountLimits = extractSep24AmountLimits(
       resolved.raw?.sep24Info,
       anchor.currency,
       anchor.type === "on-ramp" ? "origin" : "destination"
@@ -147,6 +204,7 @@ async function resolveAnchorRuntime(anchor: AnchorCatalogEntry): Promise<AnchorR
         percent: resolved.fees.percent,
         source: resolved.fees.source,
       },
+      amountLimits,
     };
 
     try {
@@ -204,8 +262,19 @@ async function resolveAnchorRuntime(anchor: AnchorCatalogEntry): Promise<AnchorR
         }`,
       ],
       fees: { source: "default" },
+      amountLimits: undefined,
     };
   }
+}
+
+function amountWithinLimits(
+  amount: number,
+  limits: AnchorRuntime["amountLimits"]
+): boolean {
+  if (!limits) return true;
+  if (typeof limits.min === "number" && amount < limits.min) return false;
+  if (typeof limits.max === "number" && amount >= limits.max) return false;
+  return true;
 }
 
 function buildRoute(
@@ -312,6 +381,38 @@ function anchorMatchesCountry(anchor: AnchorRuntime, country: string): boolean {
   );
 }
 
+function selectOperationalAnchorsForCountry(
+  runtimes: AnchorRuntime[],
+  input: {
+    country: string;
+    type: "on-ramp" | "off-ramp";
+    amount: number;
+  }
+): AnchorRuntime[] {
+  const deduped = new Map<string, AnchorRuntime>();
+
+  for (const runtime of runtimes) {
+    if (runtime.catalog.type !== input.type) continue;
+    if (!anchorMatchesCountry(runtime, input.country)) continue;
+    if (!runtime.operational) continue;
+    if (!amountWithinLimits(input.amount, runtime.amountLimits)) continue;
+
+    const network = runtime.catalog.network === "testnet" ? "testnet" : "mainnet";
+    const key = [
+      network,
+      runtime.catalog.domain,
+      runtime.catalog.currency,
+      runtime.catalog.type,
+    ].join("|");
+    const current = deduped.get(key);
+    if (!current || current.catalog.country === "ZZ") {
+      deduped.set(key, runtime);
+    }
+  }
+
+  return [...deduped.values()];
+}
+
 function selectRoutePortfolio(
   scoredRoutes: RemittanceRoute[],
   maxRoutes: number
@@ -360,18 +461,16 @@ export async function compareRoutesWithAnchors(input: CompareRoutesInput) {
   });
 
   const runtimes = await Promise.all(anchors.map(resolveAnchorRuntime));
-  const originAnchors = runtimes.filter(
-    (r) =>
-      r.catalog.type === "on-ramp" &&
-      anchorMatchesCountry(r, input.origin) &&
-      r.operational
-  );
-  const destinationAnchors = runtimes.filter(
-    (r) =>
-      r.catalog.type === "off-ramp" &&
-      anchorMatchesCountry(r, input.destination) &&
-      r.operational
-  );
+  const originAnchors = selectOperationalAnchorsForCountry(runtimes, {
+    country: input.origin,
+    type: "on-ramp",
+    amount: input.amount,
+  });
+  const destinationAnchors = selectOperationalAnchorsForCountry(runtimes, {
+    country: input.destination,
+    type: "off-ramp",
+    amount: input.amount,
+  });
 
   const routes: RemittanceRoute[] = [];
   const fxCache = new Map<string, number>();

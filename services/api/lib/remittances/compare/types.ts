@@ -53,6 +53,10 @@ export interface AnchorRuntime {
     percent?: number;
     source?: "sep24" | "sep6" | "default";
   };
+  amountLimits?: {
+    min?: number;
+    max?: number;
+  };
 }
 
 export interface RemittanceRoute {
