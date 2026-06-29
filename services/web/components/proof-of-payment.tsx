@@ -3,7 +3,13 @@
 import React from "react";
 import type { ProofOfPayment, Transaction } from "@/lib/types";
 import Image from "next/image";
-import { pollTransferStatus, verifyProof } from "@/lib/anchors-api";
+import {
+  pollTransferStatus,
+  submitWithdrawalPayment,
+  verifyProof,
+} from "@/lib/anchors-api";
+import { ensureFreighterNetwork, signFreighterTransaction } from "@/lib/wallet";
+import { useWallet } from "@/lib/wallet-context";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -44,7 +50,8 @@ export function ProofOfPaymentView({
   const [autoStatus, setAutoStatus] = useState<string | null>(null);
   const [verifyError, setVerifyError] = useState<string | null>(null);
   const [showManualHash, setShowManualHash] = useState(false);
-  const [pollRequestId, setPollRequestId] = useState(0);
+  const [signingWithdrawal, setSigningWithdrawal] = useState(false);
+  const { status: walletStatus, walletType, address } = useWallet();
 
   const statusRef = transaction.statusRef ?? "";
   const explorerNetwork = transaction.route.network === "testnet" ? "testnet" : "public";
@@ -133,6 +140,71 @@ Verify on Stellar: ${verificationUrl}
     await createProofFromHash(hash);
   }, [createProofFromHash, txHashInput]);
 
+  const pollAnchorStatus = useCallback(async (options?: { allowSigning?: boolean }) => {
+    setPolling(true);
+    try {
+      const status = await pollTransferStatus({
+        transactionId: transaction.id,
+        statusRef,
+      });
+
+      const origin = status.anchors.find((a) => a.role === "origin");
+      const destination = status.anchors.find((a) => a.role === "destination");
+      setAutoStatus(
+        `Origin: ${origin?.status || "pending"} | Destination: ${
+          destination?.status || "pending"
+        }`
+      );
+
+      const withdrawalPayment = status.withdrawalPayment;
+      if (options?.allowSigning && withdrawalPayment) {
+        if (walletStatus !== "connected" || walletType !== "freighter" || !address) {
+          throw new Error("Connect Freighter wallet before authorizing the anchor payment.");
+        }
+        setSigningWithdrawal(true);
+        await ensureFreighterNetwork(withdrawalPayment.network);
+        const signedXdr = await signFreighterTransaction({
+          transactionXdr: withdrawalPayment.transactionXdr,
+          networkPassphrase: withdrawalPayment.networkPassphrase,
+          address,
+        });
+        const submitted = await submitWithdrawalPayment({
+          signedXdr,
+          network: withdrawalPayment.network,
+          networkPassphrase: withdrawalPayment.networkPassphrase,
+        });
+        setTxHashInput(submitted.hash);
+        await createProofFromHash(submitted.hash);
+        return;
+      }
+
+      if (status.stellarTxHash) {
+        setTxHashInput(status.stellarTxHash);
+        await createProofFromHash(status.stellarTxHash);
+      }
+    } finally {
+      setSigningWithdrawal(false);
+      setPolling(false);
+    }
+  }, [
+    address,
+    createProofFromHash,
+    statusRef,
+    transaction.id,
+    walletStatus,
+    walletType,
+  ]);
+
+  const handleCheckStatus = useCallback(async () => {
+    if (!statusRef) return;
+    setVerifyError(null);
+    try {
+      await pollAnchorStatus({ allowSigning: true });
+    } catch (error) {
+      setVerifyError(error instanceof Error ? error.message : "Status check failed");
+    }
+  }, [pollAnchorStatus, statusRef]);
+
   useEffect(() => {
     if (proof) return;
     if (!statusRef) return;
@@ -142,35 +214,13 @@ Verify on Stellar: ${verificationUrl}
 
     const run = async () => {
       if (cancelled) return;
-      setPolling(true);
       try {
-        const status = await pollTransferStatus({
-          transactionId: transaction.id,
-          statusRef,
-        });
-
-        if (cancelled) return;
-
-        const origin = status.anchors.find((a) => a.role === "origin");
-        const destination = status.anchors.find((a) => a.role === "destination");
-        setAutoStatus(
-          `Origin: ${origin?.status || "pending"} | Destination: ${
-            destination?.status || "pending"
-          }`
-        );
-
-        if (status.stellarTxHash) {
-          setTxHashInput(status.stellarTxHash);
-          await createProofFromHash(status.stellarTxHash);
-          return;
-        }
+        await pollAnchorStatus();
       } catch (error) {
         if (!cancelled) {
           setAutoStatus(null);
           setVerifyError(error instanceof Error ? error.message : "Auto polling failed");
         }
-      } finally {
-        if (!cancelled) setPolling(false);
       }
 
       timer = setTimeout(run, 15000);
@@ -182,7 +232,7 @@ Verify on Stellar: ${verificationUrl}
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [createProofFromHash, pollRequestId, proof, statusRef, transaction.id]);
+  }, [pollAnchorStatus, proof, statusRef]);
 
   if (!proof) {
     return (
@@ -215,12 +265,16 @@ Verify on Stellar: ${verificationUrl}
               type="button"
               variant="outline"
               size="sm"
-              onClick={() => setPollRequestId((value) => value + 1)}
-              disabled={polling || !statusRef}
+              onClick={handleCheckStatus}
+              disabled={polling || signingWithdrawal || !statusRef}
               className="mt-3 rounded-lg bg-transparent"
             >
-              <RefreshCw className="mr-2 h-3.5 w-3.5" />
-              Check status
+              {signingWithdrawal ? (
+                <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <RefreshCw className="mr-2 h-3.5 w-3.5" />
+              )}
+              {signingWithdrawal ? "Signing anchor payment" : "Check status"}
             </Button>
           </div>
 

@@ -293,6 +293,7 @@ export async function pollTransferStatus(params: {
   status: "ok";
   transactionId: string;
   stellarTxHash?: string;
+  withdrawalPayment?: PreparedWithdrawalPayment;
   completed: boolean;
   anchors: Array<{
     role: "origin" | "destination";
@@ -302,6 +303,7 @@ export async function pollTransferStatus(params: {
     status?: string;
     stellarTxHash?: string;
     externalTransactionId?: string;
+    withdrawalPayment?: PreparedWithdrawalPayment;
     error?: string;
   }>;
 }> {
@@ -320,6 +322,7 @@ export async function pollTransferStatus(params: {
     status?: "ok";
     transactionId?: string;
     stellarTxHash?: string;
+    withdrawalPayment?: PreparedWithdrawalPayment;
     completed?: boolean;
     anchors?: Array<{
       role: "origin" | "destination";
@@ -329,6 +332,7 @@ export async function pollTransferStatus(params: {
       status?: string;
       stellarTxHash?: string;
       externalTransactionId?: string;
+      withdrawalPayment?: PreparedWithdrawalPayment;
       error?: string;
     }>;
     error?: string;
@@ -342,6 +346,7 @@ export async function pollTransferStatus(params: {
     status: "ok",
     transactionId: payload.transactionId,
     stellarTxHash: payload.stellarTxHash,
+    withdrawalPayment: payload.withdrawalPayment,
     completed: Boolean(payload.completed),
     anchors: payload.anchors ?? [],
   };

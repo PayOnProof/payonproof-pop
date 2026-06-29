@@ -91,6 +91,11 @@ interface Sep24StatusHandle {
   interactiveId: string;
   anchorName: string;
   role: "origin" | "destination";
+  account?: string;
+  network?: "mainnet" | "testnet";
+  networkPassphrase?: string;
+  assetCode?: string;
+  assetIssuer?: string;
 }
 
 interface Sep24StatusRefPayload {
@@ -256,6 +261,16 @@ function normalizeStellarAmount(value: unknown): string | undefined {
     .replace(/\.$/, "");
 }
 
+function isValidStellarAccount(value: string): boolean {
+  if (!/^G[A-Z2-7]{55}$/.test(value)) return false;
+  try {
+    Keypair.fromPublicKey(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function memoFromSep24(memo?: string, memoType?: string) {
   if (!memo) return undefined;
   const normalizedType = (memoType || "").trim().toLowerCase();
@@ -289,6 +304,7 @@ async function prepareWithdrawalPayment(input: {
   const destination = asString(input.status.withdrawAnchorAccount);
   const amount = normalizeStellarAmount(input.status.amountIn);
   if (!destination || !amount) return undefined;
+  if (!isValidStellarAccount(destination)) return undefined;
 
   const assetCode = input.assetCode.trim().toUpperCase();
   const asset =
@@ -297,11 +313,7 @@ async function prepareWithdrawalPayment(input: {
       : input.assetIssuer
       ? new Asset(assetCode, input.assetIssuer)
       : undefined;
-  if (!asset) {
-    throw new Error(
-      `Cannot prepare withdrawal payment for ${assetCode}; missing asset issuer from anchor metadata.`
-    );
-  }
+  if (!asset) return undefined;
 
   const server = horizonServerForNetwork(network);
   const sourceAccount = await server.loadAccount(input.account);
@@ -1439,6 +1451,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         state.anchors.map(async (handle) => {
           try {
             const s = await fetchSep24TransactionStatus(handle);
+            const withdrawalPayment =
+              handle.role === "destination" &&
+              handle.account &&
+              handle.networkPassphrase &&
+              handle.assetCode
+                ? await prepareWithdrawalPayment({
+                    account: handle.account,
+                    anchorName: handle.anchorName,
+                    network: handle.network,
+                    networkPassphrase: handle.networkPassphrase,
+                    assetCode: handle.assetCode,
+                    assetIssuer: handle.assetIssuer,
+                    status: s,
+                  })
+                : undefined;
             return {
               role: handle.role,
               anchorName: handle.anchorName,
@@ -1447,6 +1474,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               status: s.status,
               stellarTxHash: s.stellarTxHash,
               externalTransactionId: s.externalTransactionId,
+              withdrawalPayment,
             };
           } catch (error) {
             return {
@@ -1463,6 +1491,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const firstHash = results
         .filter((item): item is Extract<StatusPollResult, { ok: true }> => item.ok)
         .find((item) => item.stellarTxHash)?.stellarTxHash;
+      const withdrawalPayment = results
+        .filter((item): item is Extract<StatusPollResult, { ok: true }> => item.ok)
+        .find((item) => item.withdrawalPayment)?.withdrawalPayment;
       const completed = results.some((item) => {
         if (!item.ok || !item.status) return false;
         const normalized = item.status.toLowerCase();
@@ -1473,6 +1504,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         status: "ok",
         transactionId,
         stellarTxHash: firstHash,
+        withdrawalPayment,
         completed,
         anchors: results,
       });
@@ -1592,6 +1624,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           interactiveId: interactive.id,
           anchorName: anchor.anchorName,
           role: anchor.role,
+          account: anchor.account,
+          network: anchor.network,
+          networkPassphrase: anchor.networkPassphrase,
+          assetCode: anchor.assetCode,
+          assetIssuer: anchor.assetIssuer,
         });
       }
     }
