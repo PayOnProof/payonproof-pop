@@ -168,7 +168,8 @@ function resolveKnownAssetIssuer(input: {
   const domain = toHostname(input.domain);
   if (
     input.network === "testnet" &&
-    domain === "testanchor.stellar.org" &&
+    (domain === "testanchor.stellar.org" ||
+      domain === "anchor-stage.owlpay.com") &&
     assetCode === "USDC"
   ) {
     return "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
