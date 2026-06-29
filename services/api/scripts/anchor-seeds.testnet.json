@@ -4,5 +4,11 @@
     "domain": "extstellar.moneygram.com",
     "countries": ["US", "CR", "CO", "MX", "AR", "BR", "CL", "PE", "PA", "EC"],
     "currencies": ["USDC"]
+  },
+  {
+    "name": "SDF Test Anchor",
+    "domain": "testanchor.stellar.org",
+    "countries": ["US", "CR", "ZZ"],
+    "currencies": ["USDC", "XLM", "SRT"]
   }
 ]
