@@ -556,11 +556,28 @@ async function startSep24Interactive(input: {
 }): Promise<{ id?: string; url: string; type?: string }> {
   const transferServer = normalizeBaseUrl(input.transferServerSep24);
   const endpoint = `${transferServer}/transactions/${input.operation}/interactive`;
+  const isMoneyGramSep24 = /moneygram\.com$/i.test(
+    (() => {
+      try {
+        return new URL(transferServer).hostname;
+      } catch {
+        return transferServer;
+      }
+    })()
+  );
   const attempts: Array<{ assetCode: string; assetIssuer?: string }> = [];
-  attempts.push({ assetCode: input.assetCode, assetIssuer: input.assetIssuer });
-  if (input.assetIssuer) {
-    attempts.push({ assetCode: `${input.assetCode}:${input.assetIssuer}` });
+  if (isMoneyGramSep24 && input.assetCode.toUpperCase() === "USDC") {
     attempts.push({ assetCode: input.assetCode });
+    if (input.assetIssuer) {
+      attempts.push({ assetCode: input.assetCode, assetIssuer: input.assetIssuer });
+      attempts.push({ assetCode: `${input.assetCode}:${input.assetIssuer}` });
+    }
+  } else {
+    attempts.push({ assetCode: input.assetCode, assetIssuer: input.assetIssuer });
+    if (input.assetIssuer) {
+      attempts.push({ assetCode: `${input.assetCode}:${input.assetIssuer}` });
+      attempts.push({ assetCode: input.assetCode });
+    }
   }
 
   const seen = new Set<string>();
@@ -574,31 +591,12 @@ async function startSep24Interactive(input: {
   let lastError = "";
   for (const attempt of deduped) {
     const callbackParam = process.env.SEP24_CALLBACK_URL_PARAM?.trim();
-    const isMoneyGramSep24 = /moneygram\.com$/i.test(
-      (() => {
-        try {
-          return new URL(transferServer).hostname;
-        } catch {
-          return transferServer;
-        }
-      })()
-    );
     const requestBody: Record<string, string> = {
       asset_code: attempt.assetCode,
       account: input.account,
       amount: String(input.amount),
     };
     if (attempt.assetIssuer) requestBody.asset_issuer = attempt.assetIssuer;
-    if (
-      isMoneyGramSep24 &&
-      requestBody.asset_code.toUpperCase() === "USDC" &&
-      !requestBody.asset_issuer
-    ) {
-      requestBody.asset_issuer = resolveMoneyGramUsdcIssuer({
-        network: input.network,
-        domain: transferServer,
-      });
-    }
     // MoneyGram SEP-24 can reject non-numeric/custom memo values on interactive init.
     if (input.memo && !isMoneyGramSep24) requestBody.memo = input.memo;
     if (input.callbackUrl && callbackParam) requestBody[callbackParam] = input.callbackUrl;
