@@ -252,7 +252,10 @@ function buildRoute(
       id: originAnchor.catalog.id,
       name: originAnchor.catalog.name,
       network: originAnchor.catalog.network === "testnet" ? "testnet" : "mainnet",
-      country: originAnchor.catalog.country,
+      country:
+        originAnchor.catalog.country === "ZZ"
+          ? input.origin
+          : originAnchor.catalog.country,
       currency: originAnchor.catalog.currency,
       type: "on-ramp",
       status: originAnchor.operational ? "operational" : "offline",
@@ -262,7 +265,10 @@ function buildRoute(
       id: destinationAnchor.catalog.id,
       name: destinationAnchor.catalog.name,
       network: destinationAnchor.catalog.network === "testnet" ? "testnet" : "mainnet",
-      country: destinationAnchor.catalog.country,
+      country:
+        destinationAnchor.catalog.country === "ZZ"
+          ? input.destination
+          : destinationAnchor.catalog.country,
       currency: destinationAnchor.catalog.currency,
       type: "off-ramp",
       status: destinationAnchor.operational ? "operational" : "offline",
@@ -291,6 +297,61 @@ function buildRoute(
   };
 }
 
+function isSameAnchorTestRoute(route: RemittanceRoute): boolean {
+  return (
+    route.network === "testnet" &&
+    route.originAnchor.name === route.destinationAnchor.name &&
+    route.originCurrency === route.destinationCurrency
+  );
+}
+
+function anchorMatchesCountry(anchor: AnchorRuntime, country: string): boolean {
+  return (
+    anchor.catalog.country === country ||
+    (anchor.catalog.network === "testnet" && anchor.catalog.country === "ZZ")
+  );
+}
+
+function selectRoutePortfolio(
+  scoredRoutes: RemittanceRoute[],
+  maxRoutes: number
+): RemittanceRoute[] {
+  const selected = scoredRoutes.slice(0, maxRoutes);
+  if (selected.length < maxRoutes) return selected;
+
+  const selectedIds = new Set(selected.map((route) => route.id));
+  const selectedSameAnchorNames = new Set(
+    selected
+      .filter(isSameAnchorTestRoute)
+      .map((route) => route.originAnchor.name)
+  );
+
+  const missingSameAnchorRoutes = scoredRoutes.filter(
+    (route) =>
+      isSameAnchorTestRoute(route) &&
+      !selectedIds.has(route.id) &&
+      !selectedSameAnchorNames.has(route.originAnchor.name)
+  );
+
+  for (const route of missingSameAnchorRoutes) {
+    let replaceIndex = -1;
+    for (let index = selected.length - 1; index >= 0; index -= 1) {
+      const candidate = selected[index];
+      if (!candidate.recommended && !isSameAnchorTestRoute(candidate)) {
+        replaceIndex = index;
+        break;
+      }
+    }
+    if (replaceIndex < 0) break;
+    selectedIds.delete(selected[replaceIndex].id);
+    selected[replaceIndex] = route;
+    selectedIds.add(route.id);
+    selectedSameAnchorNames.add(route.originAnchor.name);
+  }
+
+  return selected;
+}
+
 export async function compareRoutesWithAnchors(input: CompareRoutesInput) {
   const anchors = await getAnchorsForCorridor({
     origin: input.origin,
@@ -302,13 +363,13 @@ export async function compareRoutesWithAnchors(input: CompareRoutesInput) {
   const originAnchors = runtimes.filter(
     (r) =>
       r.catalog.type === "on-ramp" &&
-      r.catalog.country === input.origin &&
+      anchorMatchesCountry(r, input.origin) &&
       r.operational
   );
   const destinationAnchors = runtimes.filter(
     (r) =>
       r.catalog.type === "off-ramp" &&
-      r.catalog.country === input.destination &&
+      anchorMatchesCountry(r, input.destination) &&
       r.operational
   );
 
@@ -335,7 +396,7 @@ export async function compareRoutesWithAnchors(input: CompareRoutesInput) {
     }
   }
 
-  const scored = scoreRoutes(routes).slice(0, MAX_ROUTES);
+  const scored = selectRoutePortfolio(scoreRoutes(routes), MAX_ROUTES);
 
   return {
     routes: scored,
