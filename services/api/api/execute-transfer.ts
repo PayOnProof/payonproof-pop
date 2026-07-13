@@ -37,6 +37,7 @@ interface RoutePayload {
   network?: "mainnet" | "testnet";
   originAnchor: { id: string; name?: string };
   destinationAnchor: { id: string; name?: string };
+  originCountry?: string;
   originCurrency: string;
   destinationCountry?: string;
   destinationCurrency: string;
@@ -1405,6 +1406,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
         if (
           paymentLink.network !== routeNetwork ||
+          paymentLink.originAnchorId !== originAnchor.id ||
+          paymentLink.originCountry !== asString(route.originCountry) ||
           paymentLink.destinationAnchorId !== destinationAnchor.id ||
           paymentLink.destinationCountry !== asString(route.destinationCountry) ||
           paymentLink.assetCode !==
@@ -1668,7 +1671,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const destinationPrepared = prepared.anchors.find(
         (anchor) => anchor.role === "destination"
       );
+      const originPrepared = prepared.anchors.find(
+        (anchor) => anchor.role === "origin"
+      );
       if (
+        !originPrepared ||
+        originPrepared.anchorId !== paymentLink.originAnchorId ||
         !destinationPrepared ||
         destinationPrepared.anchorId !== paymentLink.destinationAnchorId ||
         destinationPrepared.assetCode !== paymentLink.assetCode ||

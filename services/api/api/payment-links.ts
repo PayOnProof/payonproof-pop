@@ -10,7 +10,7 @@ import {
   type PaymentLinkNetwork,
   type PaymentLinkRecord,
 } from "../lib/repositories/payment-links.js";
-import { listActiveAnchors } from "../lib/repositories/anchors-catalog.js";
+import { compareRoutesWithAnchors } from "../lib/remittances/compare/service.js";
 
 function asString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
@@ -114,6 +114,8 @@ async function handleCreate(body: Record<string, unknown>, res: VercelResponse) 
   const network = asNetwork(body.network);
   const recipientAccount = asString(body.recipientAccount);
   const recipientLabel = asString(body.recipientLabel).slice(0, 80);
+  const originCountry = asString(body.originCountry).toUpperCase();
+  const originAnchorId = asString(body.originAnchorId);
   const destinationCountry = asString(body.destinationCountry).toUpperCase();
   const destinationAnchorId = asString(body.destinationAnchorId);
   const amount = normalizePaymentAmount(body.amount);
@@ -124,8 +126,13 @@ async function handleCreate(body: Record<string, unknown>, res: VercelResponse) 
   if (!isPublicKey(recipientAccount)) {
     return res.status(400).json({ error: "recipientAccount is not a valid Stellar account" });
   }
-  if (!/^[A-Z]{2}$/.test(destinationCountry)) {
-    return res.status(400).json({ error: "destinationCountry must be an ISO country code" });
+  if (!/^[A-Z]{2}$/.test(originCountry) || !/^[A-Z]{2}$/.test(destinationCountry)) {
+    return res.status(400).json({
+      error: "originCountry and destinationCountry must be ISO country codes",
+    });
+  }
+  if (!originAnchorId) {
+    return res.status(400).json({ error: "originAnchorId is required" });
   }
   if (!destinationAnchorId) {
     return res.status(400).json({ error: "destinationAnchorId is required" });
@@ -135,36 +142,44 @@ async function handleCreate(body: Record<string, unknown>, res: VercelResponse) 
     return res.status(400).json({ error: "expiresInHours must be between 1 and 2160" });
   }
 
-  const anchors = await listActiveAnchors({ network });
-  const destinationAnchor = anchors.find(
-    (anchor) =>
-      anchor.id === destinationAnchorId &&
-      anchor.type === "off-ramp" &&
-      anchor.capabilities.operational &&
-      anchor.capabilities.sep10 &&
-      anchor.capabilities.sep24 &&
-      (anchor.country === destinationCountry || anchor.country === "ZZ")
+  const comparison = await compareRoutesWithAnchors({
+    origin: originCountry,
+    destination: destinationCountry,
+    amount: Number(amount),
+    network,
+  });
+  const selectedRoute = comparison.routes.find(
+    (route) =>
+      route.available &&
+      route.originAnchor.id === originAnchorId &&
+      route.destinationAnchor.id === destinationAnchorId
   );
-  if (!destinationAnchor) {
+  if (!selectedRoute) {
     return res.status(400).json({
-      error: "Selected destination anchor is not operational for this country and network.",
+      error: "Selected anchor route is no longer operational for this corridor and amount.",
     });
   }
 
   const slug = randomBytes(9).toString("base64url").toLowerCase();
   const manageToken = randomBytes(24).toString("base64url");
+  const quotedAt = new Date().toISOString();
   const created = await createPaymentLink({
     slug,
     network,
     recipientAccount,
     recipientLabel: recipientLabel || undefined,
+    originCountry,
+    originAnchorId: selectedRoute.originAnchor.id,
+    originAnchorName: selectedRoute.originAnchor.name,
     destinationCountry,
-    destinationAnchorId: destinationAnchor.id,
-    destinationAnchorName: destinationAnchor.name,
-    assetCode: destinationAnchor.currency,
+    destinationAnchorId: selectedRoute.destinationAnchor.id,
+    destinationAnchorName: selectedRoute.destinationAnchor.name,
+    assetCode: selectedRoute.destinationCurrency,
     amount,
     description: description || undefined,
     expiresAt: new Date(Date.now() + expiresInHours * 60 * 60 * 1000).toISOString(),
+    routeSnapshot: selectedRoute,
+    quotedAt,
     manageTokenHash: hashToken(manageToken),
   });
 

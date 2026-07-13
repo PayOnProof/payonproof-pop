@@ -1,4 +1,5 @@
 import { apiUrl } from "./api";
+import type { RemittanceRoute } from "./types";
 
 export type PaymentLinkNetwork = "mainnet" | "testnet";
 export type PaymentLinkStatus =
@@ -15,6 +16,9 @@ export interface PaymentLink {
   network: PaymentLinkNetwork;
   recipientAccount: string;
   recipientLabel?: string;
+  originCountry: string;
+  originAnchorId: string;
+  originAnchorName: string;
   destinationCountry: string;
   destinationAnchorId: string;
   destinationAnchorName: string;
@@ -27,6 +31,8 @@ export interface PaymentLink {
   paidAt?: string;
   payerAccount?: string;
   anchorTransactionId?: string;
+  routeSnapshot?: RemittanceRoute;
+  quotedAt?: string;
   stellarTxHash?: string;
   failureReason?: string;
   createdAt: string;
@@ -60,6 +66,8 @@ export async function createPaymentLink(input: {
   network: PaymentLinkNetwork;
   recipientAccount: string;
   recipientLabel?: string;
+  originCountry: string;
+  originAnchorId: string;
   destinationCountry: string;
   destinationAnchorId: string;
   amount: string;
