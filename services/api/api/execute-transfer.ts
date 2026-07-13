@@ -1173,7 +1173,11 @@ async function prepareAnchorAuth(input: {
       "MoneyGram user integer memo is required by current config. Set MONEYGRAM_USER_ID (or MONEYGRAM_TEST_USER_ID), or disable MONEYGRAM_REQUIRE_USER_ID."
     );
   }
-  if (isMoneyGram && !input.clientDomain) {
+  if (
+    isMoneyGram &&
+    shouldSendClientDomainForAnchor(executionDomain) &&
+    !input.clientDomain
+  ) {
     throw new Error(
       "MoneyGram requires client_domain for SEP-10 challenge. Set SEP10_CLIENT_DOMAIN in API env."
     );
@@ -1335,11 +1339,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         anchors,
         asString(route.destinationAnchor?.id)
       );
-      const routeUsesMoneyGram =
-        isMoneyGramDomain(originAnchor.domain) ||
-        isMoneyGramDomain(destinationAnchor.domain);
-      const mustSendClientDomain =
-        shouldSendSep10ClientDomain() || routeUsesMoneyGram;
+      const mustSendClientDomain = shouldSendSep10ClientDomain();
       const originNeedsClientDomain = shouldSendClientDomainForAnchor(
         originAnchor.domain
       );
