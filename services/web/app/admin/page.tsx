@@ -524,7 +524,7 @@ function AdminPageContent() {
           <Input
             value={domain}
             onChange={(event) => setDomain(event.target.value)}
-            placeholder="stellar.moneygram.com"
+            placeholder="mgxanchor.moneygram.com"
           />
           <Input
             value={countries}

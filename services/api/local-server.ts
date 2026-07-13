@@ -71,6 +71,8 @@ const routeMap: Record<string, string> = {
   "POST /api/compare-routes": `./api/compare-routes${ROUTE_EXT}`,
   "POST /api/execute-transfer": `./api/execute-transfer${ROUTE_EXT}`,
   "POST /api/generate-proof": `./api/generate-proof${ROUTE_EXT}`,
+  "GET /api/payment-links": `./api/payment-links${ROUTE_EXT}`,
+  "POST /api/payment-links": `./api/payment-links${ROUTE_EXT}`,
   "POST /api/anchors/diagnostics": `./api/anchors/diagnostics${ROUTE_EXT}`,
   "POST /api/admin/login": `./api/admin/[...admin]${ROUTE_EXT}`,
   "GET /api/admin/session": `./api/admin/[...admin]${ROUTE_EXT}`,
