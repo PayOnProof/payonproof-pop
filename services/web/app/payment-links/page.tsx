@@ -41,7 +41,6 @@ import type { AnchorCountry, RemittanceRoute } from "@/lib/types";
 import {
   createPaymentLink,
   type PaymentLink,
-  type PaymentLinkNetwork,
 } from "@/lib/payment-links-api";
 import { cn } from "@/lib/utils";
 
@@ -51,7 +50,7 @@ type PaymentLinkStep = "search" | "routes" | "details" | "ready";
 function PaymentLinksContent() {
   const { address, status, connect } = useWallet();
   const [step, setStep] = useState<PaymentLinkStep>("search");
-  const [network, setNetwork] = useState<PaymentLinkNetwork>("testnet");
+  const network = "testnet" as const;
   const [countries, setCountries] = useState<AnchorCountry[]>([]);
   const [originCountry, setOriginCountry] = useState("");
   const [destinationCountry, setDestinationCountry] = useState("");
@@ -91,7 +90,7 @@ function PaymentLinksContent() {
     return () => {
       cancelled = true;
     };
-  }, [network]);
+  }, []);
 
   const originCountries = useMemo(
     () => countries.filter((country) => country.onRampCount > 0),
@@ -303,33 +302,6 @@ function PaymentLinksContent() {
               </div>
 
               <div className="flex flex-col gap-5 p-6">
-                <div className="flex flex-col gap-2">
-                  <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    Network
-                  </span>
-                  <div className="grid grid-cols-2 rounded-xl border border-border bg-muted/20 p-1">
-                    {(["testnet", "mainnet"] as PaymentLinkNetwork[]).map((option) => (
-                      <button
-                        key={option}
-                        type="button"
-                        onClick={() => {
-                          if (network === option) return;
-                          setNetwork(option);
-                          resetComparison();
-                        }}
-                        className={cn(
-                          "rounded-lg px-3 py-2.5 text-xs font-semibold capitalize transition-all duration-200",
-                          network === option
-                            ? "bg-primary text-primary-foreground shadow-sm"
-                            : "text-muted-foreground hover:bg-muted/40 hover:text-foreground"
-                        )}
-                      >
-                        {option}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
                 <CountrySelector
                   countries={originCountries}
                   value={originCountry}
@@ -468,8 +440,8 @@ function PaymentLinksContent() {
                   </span>{" "}
                   from {originName} to {destinationName}
                 </p>
-                <p className="mt-1 text-xs capitalize text-muted-foreground">
-                  {network} routes only
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Showing testnet routes only.
                 </p>
               </div>
 
@@ -515,7 +487,7 @@ function PaymentLinksContent() {
                 <Search className="h-8 w-8 text-muted-foreground" />
                 <p className="font-semibold">No operational routes found</p>
                 <p className="max-w-md text-sm text-muted-foreground">
-                  {noRouteReason ?? "Try another corridor, amount, or network."}
+                  {noRouteReason ?? "Try another corridor or amount."}
                 </p>
               </div>
             )}

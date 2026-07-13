@@ -16,8 +16,8 @@ function asString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function asNetwork(value: unknown): PaymentLinkNetwork | null {
-  return value === "mainnet" || value === "testnet" ? value : null;
+export function normalizePaymentLinkNetwork(value: unknown): PaymentLinkNetwork | null {
+  return value === "testnet" ? value : null;
 }
 
 function isPublicKey(value: string): boolean {
@@ -111,7 +111,7 @@ function hashToken(token: string): string {
 }
 
 async function handleCreate(body: Record<string, unknown>, res: VercelResponse) {
-  const network = asNetwork(body.network);
+  const network = normalizePaymentLinkNetwork(body.network);
   const recipientAccount = asString(body.recipientAccount);
   const recipientLabel = asString(body.recipientLabel).slice(0, 80);
   const originCountry = asString(body.originCountry).toUpperCase();
@@ -122,7 +122,7 @@ async function handleCreate(body: Record<string, unknown>, res: VercelResponse) 
   const description = asString(body.description).slice(0, 240);
   const expiresInHours = Number(body.expiresInHours ?? 72);
 
-  if (!network) return res.status(400).json({ error: "network must be mainnet or testnet" });
+  if (!network) return res.status(400).json({ error: "network must be testnet" });
   if (!isPublicKey(recipientAccount)) {
     return res.status(400).json({ error: "recipientAccount is not a valid Stellar account" });
   }

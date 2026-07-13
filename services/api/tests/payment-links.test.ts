@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { normalizePaymentAmount } from "../api/payment-links.js";
+import {
+  normalizePaymentAmount,
+  normalizePaymentLinkNetwork,
+} from "../api/payment-links.js";
+
+test("accepts testnet as the only network for new payment links", () => {
+  assert.equal(normalizePaymentLinkNetwork("testnet"), "testnet");
+  assert.equal(normalizePaymentLinkNetwork("mainnet"), null);
+  assert.equal(normalizePaymentLinkNetwork(undefined), null);
+});
 
 test("normalizes Stellar amounts without changing integer value", () => {
   assert.equal(normalizePaymentAmount("50"), "50");
