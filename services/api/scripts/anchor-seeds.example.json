@@ -1,7 +1,7 @@
 [
   {
     "name": "MoneyGram",
-    "domain": "stellar.moneygram.com",
+    "domain": "mgxanchor.moneygram.com",
     "countries": ["US"],
     "types": ["on-ramp"],
     "currencies": ["USD"]

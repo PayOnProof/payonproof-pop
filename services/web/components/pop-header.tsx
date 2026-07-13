@@ -15,11 +15,13 @@ const LANDING_NAV = [
   { label: "How It Works", href: "#how-it-works" },
   { label: "Features", href: "#features" },
   { label: "Send Money", href: "/send" },
+  { label: "Payment Links", href: "/payment-links" },
 ];
 
 const APP_NAV = [
   { label: "Home", href: "/" },
   { label: "Send Money", href: "/send" },
+  { label: "Payment Links", href: "/payment-links" },
 ];
 
 function addRipple(e: React.MouseEvent<HTMLButtonElement>) {

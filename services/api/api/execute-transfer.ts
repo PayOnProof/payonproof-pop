@@ -359,20 +359,32 @@ function resolveAnchorDomainForExecution(domain: string): string {
     useMoneyGramPreview &&
     (normalized === "stellar.moneygram.com" ||
       normalized === "extstellar.moneygram.com" ||
+      normalized === "extmgxanchor.moneygram.com" ||
+      normalized === "mgxanchor.moneygram.com" ||
       normalized === "previewstellar.moneygram.com")
   ) {
     return "previewstellar.moneygram.com";
   }
 
-  if (getPopEnv() !== "staging") return normalized;
-
-  // MoneyGram test environment mapping for staging/testnet flows.
-  if (
-    normalized === "stellar.moneygram.com" ||
-    normalized === "previewstellar.moneygram.com"
-  ) {
-    return "extstellar.moneygram.com";
+  // Keep old catalog records working after MoneyGram's sandbox host migration.
+  if (normalized === "extstellar.moneygram.com") {
+    return "extmgxanchor.moneygram.com";
   }
+
+  if (getPopEnv() === "staging" || getPopEnv() === "testnet") {
+    if (
+      normalized === "stellar.moneygram.com" ||
+      normalized === "extstellar.moneygram.com" ||
+      normalized === "previewstellar.moneygram.com" ||
+      normalized === "mgxanchor.moneygram.com"
+    ) {
+      return "extmgxanchor.moneygram.com";
+    }
+    return normalized;
+  }
+
+  // MoneyGram's current production SEP host supersedes stellar.moneygram.com.
+  if (normalized === "stellar.moneygram.com") return "mgxanchor.moneygram.com";
   return normalized;
 }
 
@@ -1030,6 +1042,8 @@ function isMoneyGramDomain(domain: string): boolean {
   return (
     normalized === "stellar.moneygram.com" ||
     normalized === "extstellar.moneygram.com" ||
+    normalized === "extmgxanchor.moneygram.com" ||
+    normalized === "mgxanchor.moneygram.com" ||
     normalized === "previewstellar.moneygram.com"
   );
 }
@@ -1057,6 +1071,7 @@ function resolveMoneyGramUsdcIssuer(input?: {
   const isTestnet =
     input?.network === "testnet" ||
     normalizedDomain === "extstellar.moneygram.com" ||
+    normalizedDomain === "extmgxanchor.moneygram.com" ||
     getPopEnv() === "staging" ||
     getPopEnv() === "testnet";
   if (isTestnet) {
@@ -1073,10 +1088,16 @@ function isMoneyGramUserIdRequired(): boolean {
 }
 
 function shouldSendClientDomainForAnchor(domain: string): boolean {
-  return (
-    isMoneyGramDomain(domain) ||
-    shouldRequireClientDomainSignature()
-  );
+  const normalized = toHostname(domain);
+  // The current MoneyGram SEP host authenticates non-custodial user accounts
+  // directly. It rejects home_domain and does not require client_domain.
+  if (
+    normalized === "extmgxanchor.moneygram.com" ||
+    normalized === "mgxanchor.moneygram.com"
+  ) {
+    return false;
+  }
+  return shouldSendSep10ClientDomain() || shouldRequireClientDomainSignature();
 }
 
 function shouldSignClientDomainForAnchor(domain: string): boolean {
@@ -1214,7 +1235,13 @@ async function prepareAnchorAuth(input: {
     memo: moneyGramMemo,
     // SEP-10 home_domain is the client (wallet) domain, not the anchor domain.
     homeDomain:
-      isMoneyGram || shouldSendSep10HomeDomain() ? input.clientDomain : undefined,
+      isMoneyGram &&
+      (executionDomain === "extmgxanchor.moneygram.com" ||
+        executionDomain === "mgxanchor.moneygram.com")
+        ? undefined
+        : shouldSendSep10HomeDomain()
+          ? input.clientDomain
+          : undefined,
     clientDomain: shouldSendClientDomainForAnchor(executionDomain)
       ? input.clientDomain
       : undefined,

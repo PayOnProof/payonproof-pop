@@ -11,5 +11,5 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["local-server.ts", "api", "lib"]
+  "include": ["local-server.ts", "api", "lib", "tests"]
 }
