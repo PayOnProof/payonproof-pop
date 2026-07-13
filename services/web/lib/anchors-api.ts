@@ -1,5 +1,10 @@
 import { apiUrl } from "./api";
-import type { AnchorCountry, ProofOfPayment, RemittanceRoute } from "./types";
+import type {
+  AnchorCatalogOption,
+  AnchorCountry,
+  ProofOfPayment,
+  RemittanceRoute,
+} from "./types";
 
 async function readApiPayload<T>(response: Response, endpoint: string): Promise<T> {
   const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
@@ -45,6 +50,25 @@ export async function fetchAnchorCountries(
   return payload.countries ?? [];
 }
 
+export async function fetchOperationalAnchors(params: {
+  network: Exclude<AnchorNetworkFilter, "all">;
+  type?: "on-ramp" | "off-ramp";
+}): Promise<AnchorCatalogOption[]> {
+  const query = new URLSearchParams({
+    network: params.network,
+    operationalOnly: "true",
+  });
+  if (params.type) query.set("type", params.type);
+  const endpoint = apiUrl(`/api/anchors/catalog?${query.toString()}`);
+  const response = await fetch(endpoint, { cache: "no-store" });
+  const payload = await readApiPayload<{
+    anchors?: AnchorCatalogOption[];
+    error?: string;
+  }>(response, endpoint);
+  if (!response.ok) throw new Error(payload.error || "Failed to load anchors");
+  return payload.anchors ?? [];
+}
+
 export async function compareRoutes(params: {
   origin: string;
   destination: string;
@@ -80,6 +104,7 @@ export interface PreparedTransfer {
   senderAccount: string;
   amount: number;
   createdAt: string;
+  paymentLinkSlug?: string;
   anchors: Array<{
     role: "origin" | "destination";
     anchorId: string;
@@ -120,6 +145,7 @@ export async function prepareTransfer(params: {
   route: RemittanceRoute;
   amount: number;
   senderAccount: string;
+  paymentLinkSlug?: string;
 }): Promise<PreparedTransfer> {
   const endpoint = apiUrl("/api/execute-transfer");
   const response = await fetch(endpoint, {
@@ -130,6 +156,7 @@ export async function prepareTransfer(params: {
       route: params.route,
       amount: params.amount,
       senderAccount: params.senderAccount,
+      paymentLinkSlug: params.paymentLinkSlug,
     }),
   });
 

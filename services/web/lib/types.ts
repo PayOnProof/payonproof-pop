@@ -92,3 +92,20 @@ export interface AnchorCountry {
   offRampCount: number;
   operationalAnchors: number;
 }
+
+export interface AnchorCatalogOption {
+  id: string;
+  name: string;
+  domain: string;
+  network: "mainnet" | "testnet";
+  country: string;
+  currency: string;
+  type: "on-ramp" | "off-ramp";
+  operational: boolean;
+  sep: {
+    sep24: boolean;
+    sep6: boolean;
+    sep31: boolean;
+    sep10: boolean;
+  };
+}

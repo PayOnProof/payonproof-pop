@@ -26,6 +26,7 @@ import {
 interface TransactionExecutionProps {
   route: RemittanceRoute;
   amount: number;
+  paymentLinkSlug?: string;
   onBack: () => void;
   onComplete: (tx: Transaction) => void;
 }
@@ -35,6 +36,7 @@ type RunPhase = "idle" | "running" | "success" | "error";
 export function TransactionExecution({
   route,
   amount,
+  paymentLinkSlug,
   onBack,
   onComplete,
 }: TransactionExecutionProps) {
@@ -62,6 +64,7 @@ export function TransactionExecution({
         route,
         amount,
         senderAccount: walletAddress,
+        paymentLinkSlug,
       });
       const trustlineSignature = prepared.trustline
         ? await signFreighterTransaction({
@@ -141,7 +144,7 @@ export function TransactionExecution({
       setErrorMessage(message);
       setPhase("error");
     }
-  }, [amount, route, status, walletAddress, walletType]);
+  }, [amount, paymentLinkSlug, route, status, walletAddress, walletType]);
 
   return (
     <Card className="overflow-hidden rounded-2xl border border-border bg-card shadow-2xl shadow-primary/5">

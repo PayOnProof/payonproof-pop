@@ -1,7 +1,13 @@
 import { apiUrl } from "./api";
 
 export type PaymentLinkNetwork = "mainnet" | "testnet";
-export type PaymentLinkStatus = "pending" | "paid" | "expired" | "cancelled" | "failed";
+export type PaymentLinkStatus =
+  | "pending"
+  | "processing"
+  | "paid"
+  | "expired"
+  | "cancelled"
+  | "failed";
 
 export interface PaymentLink {
   id: string;
@@ -9,6 +15,9 @@ export interface PaymentLink {
   network: PaymentLinkNetwork;
   recipientAccount: string;
   recipientLabel?: string;
+  destinationCountry: string;
+  destinationAnchorId: string;
+  destinationAnchorName: string;
   assetCode: string;
   assetIssuer?: string;
   amount: string;
@@ -17,14 +26,13 @@ export interface PaymentLink {
   expiresAt?: string;
   paidAt?: string;
   payerAccount?: string;
+  anchorTransactionId?: string;
   stellarTxHash?: string;
   failureReason?: string;
   createdAt: string;
   updatedAt: string;
   paymentUrl: string;
   explorerUrl?: string;
-  sep7Uri?: string;
-  sep7Signed?: boolean;
 }
 
 async function readPayload<T>(response: Response, endpoint: string): Promise<T> {
@@ -52,7 +60,8 @@ export async function createPaymentLink(input: {
   network: PaymentLinkNetwork;
   recipientAccount: string;
   recipientLabel?: string;
-  assetCode: "XLM" | "USDC";
+  destinationCountry: string;
+  destinationAnchorId: string;
   amount: string;
   description?: string;
   expiresInHours: number;
@@ -74,25 +83,6 @@ export async function fetchPaymentLink(slug: string): Promise<PaymentLink> {
     throw new Error(payload.error || "Payment link not found");
   }
   return payload.paymentLink;
-}
-
-export async function preparePaymentLink(input: {
-  slug: string;
-  payerAccount: string;
-}) {
-  return request<{
-    paymentLink: PaymentLink;
-    prepared: {
-      transactionXdr: string;
-      network: PaymentLinkNetwork;
-      networkPassphrase: string;
-      payerAccount: string;
-    };
-  }>({ action: "prepare", ...input });
-}
-
-export async function submitPaymentLink(input: { slug: string; signedXdr: string }) {
-  return request<{ paymentLink: PaymentLink }>({ action: "submit", ...input });
 }
 
 export async function cancelPaymentLink(input: { slug: string; manageToken: string }) {

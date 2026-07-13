@@ -4,6 +4,11 @@ import { Asset, Horizon, Keypair, Memo, Operation, TransactionBuilder } from "@s
 import { readJsonBody } from "../lib/http.js";
 import { listActiveAnchors } from "../lib/repositories/anchors-catalog.js";
 import { getAnchorCallbackEvent } from "../lib/repositories/anchor-events.js";
+import {
+  getPaymentLink,
+  startPaymentLink,
+  updatePaymentLink,
+} from "../lib/repositories/payment-links.js";
 import type { AnchorCatalogEntry } from "../lib/remittances/compare/types.js";
 import { resolveAnchorCapabilities } from "../lib/stellar/capabilities.js";
 import { getPopEnv, getStellarConfig } from "../lib/stellar.js";
@@ -33,6 +38,7 @@ interface RoutePayload {
   originAnchor: { id: string; name?: string };
   destinationAnchor: { id: string; name?: string };
   originCurrency: string;
+  destinationCountry?: string;
   destinationCurrency: string;
   available?: boolean;
 }
@@ -59,6 +65,7 @@ interface PreparedTransferPayload {
   senderAccount: string;
   amount: number;
   createdAt: string;
+  paymentLinkSlug?: string;
   anchors: PreparedAnchorAuth[];
   trustline?: PreparedTrustline;
 }
@@ -102,6 +109,7 @@ interface Sep24StatusRefPayload {
   transactionId: string;
   createdAt: string;
   callbackToken: string;
+  paymentLinkSlug?: string;
   anchors: Sep24StatusHandle[];
 }
 
@@ -386,6 +394,56 @@ function resolveAnchorDomainForExecution(domain: string): string {
   // MoneyGram's current production SEP host supersedes stellar.moneygram.com.
   if (normalized === "stellar.moneygram.com") return "mgxanchor.moneygram.com";
   return normalized;
+}
+
+async function loadUsablePaymentLink(slug: string) {
+  const link = await getPaymentLink(slug);
+  if (!link) throw new Error("Payment link not found.");
+  if (
+    link.status === "pending" &&
+    link.expiresAt &&
+    new Date(link.expiresAt).getTime() <= Date.now()
+  ) {
+    await updatePaymentLink(slug, { status: "expired" });
+    throw new Error("Payment link has expired.");
+  }
+  if (link.status !== "pending") {
+    throw new Error(`Payment link is ${link.status}.`);
+  }
+  if (!link.destinationAnchorId || !link.destinationCountry) {
+    throw new Error("Legacy direct payment links cannot start anchor transfers.");
+  }
+  return link;
+}
+
+async function markLinkedPaymentComplete(input: {
+  state: Sep24StatusRefPayload;
+  stellarTxHash?: string;
+}) {
+  const slug = input.state.paymentLinkSlug;
+  const stellarTxHash = input.stellarTxHash?.trim();
+  if (!slug || !stellarTxHash) return;
+
+  const link = await getPaymentLink(slug);
+  if (
+    !link ||
+    link.status !== "processing" ||
+    link.anchorTransactionId !== input.state.transactionId
+  ) {
+    return;
+  }
+
+  const network = input.state.anchors.find((anchor) => anchor.network)?.network;
+  await horizonServerForNetwork(network)
+    .transactions()
+    .transaction(stellarTxHash)
+    .call();
+  await updatePaymentLink(slug, {
+    status: "paid",
+    paidAt: new Date().toISOString(),
+    stellarTxHash,
+    failureReason: null,
+  });
 }
 
 function appendQuery(url: string, key: string, value?: string): string {
@@ -1311,6 +1369,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const route = parsed.value.route as RoutePayload | undefined;
       const senderAccount = asString(parsed.value.senderAccount);
       const amount = asNumber(parsed.value.amount);
+      const paymentLinkSlug = asString(parsed.value.paymentLinkSlug).toLowerCase();
       const clientDomain = resolveClientDomain(req);
       const routeAvailable = Boolean(route?.available);
 
@@ -1339,6 +1398,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         anchors,
         asString(route.destinationAnchor?.id)
       );
+      if (paymentLinkSlug) {
+        const paymentLink = await loadUsablePaymentLink(paymentLinkSlug);
+        if (paymentLink.recipientAccount === senderAccount) {
+          return res.status(400).json({ error: "You cannot pay your own payment request." });
+        }
+        if (
+          paymentLink.network !== routeNetwork ||
+          paymentLink.destinationAnchorId !== destinationAnchor.id ||
+          paymentLink.destinationCountry !== asString(route.destinationCountry) ||
+          paymentLink.assetCode !==
+            (asString(route.destinationCurrency) || destinationAnchor.currency) ||
+          Math.abs(Number(paymentLink.amount) - amount) > 0.0000001
+        ) {
+          return res.status(400).json({
+            error: "Selected route does not match this payment request.",
+          });
+        }
+      }
       const mustSendClientDomain = shouldSendSep10ClientDomain();
       const originNeedsClientDomain = shouldSendClientDomainForAnchor(
         originAnchor.domain
@@ -1431,6 +1508,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         senderAccount,
         amount,
         createdAt: new Date().toISOString(),
+        paymentLinkSlug: paymentLinkSlug || undefined,
         anchors: preparedAnchors,
         trustline,
       };
@@ -1463,7 +1541,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         transactionId,
         callbackToken: state.callbackToken,
       });
-      if (callbackEvent?.stellarTxHash) {
+      if (callbackEvent?.stellarTxHash && !state.paymentLinkSlug) {
         return res.status(200).json({
           status: "ok",
           transactionId,
@@ -1518,21 +1596,37 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const firstHash = results
         .filter((item): item is Extract<StatusPollResult, { ok: true }> => item.ok)
         .find((item) => item.stellarTxHash)?.stellarTxHash;
-      const withdrawalPayment = results
-        .filter((item): item is Extract<StatusPollResult, { ok: true }> => item.ok)
-        .find((item) => item.withdrawalPayment)?.withdrawalPayment;
+      const successfulResults = results.filter(
+        (item): item is Extract<StatusPollResult, { ok: true }> => item.ok
+      );
+      const withdrawalPayment = successfulResults.find(
+        (item) => item.withdrawalPayment
+      )?.withdrawalPayment;
       const completed = results.some((item) => {
         if (!item.ok || !item.status) return false;
         const normalized = item.status.toLowerCase();
         return normalized === "complete" || normalized === "completed";
       });
+      const destinationResult = successfulResults.find(
+        (item) => item.role === "destination"
+      );
+      const destinationStatus = destinationResult?.status?.toLowerCase();
+      const destinationCompleted =
+        destinationStatus === "complete" || destinationStatus === "completed";
+      const linkedPaymentHash = destinationCompleted
+        ? destinationResult?.stellarTxHash
+        : undefined;
+      await markLinkedPaymentComplete({
+        state,
+        stellarTxHash: linkedPaymentHash,
+      });
 
       return res.status(200).json({
         status: "ok",
         transactionId,
-        stellarTxHash: firstHash,
+        stellarTxHash: state.paymentLinkSlug ? linkedPaymentHash : firstHash,
         withdrawalPayment,
-        completed,
+        completed: state.paymentLinkSlug ? destinationCompleted : completed,
         anchors: results,
       });
     }
@@ -1568,6 +1662,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (!prepared || !prepared.transactionId || !Array.isArray(prepared.anchors)) {
       return res.status(400).json({ error: "Missing field: prepared" });
+    }
+    if (prepared.paymentLinkSlug) {
+      const paymentLink = await loadUsablePaymentLink(prepared.paymentLinkSlug);
+      const destinationPrepared = prepared.anchors.find(
+        (anchor) => anchor.role === "destination"
+      );
+      if (
+        !destinationPrepared ||
+        destinationPrepared.anchorId !== paymentLink.destinationAnchorId ||
+        destinationPrepared.assetCode !== paymentLink.assetCode ||
+        Math.abs(prepared.amount - Number(paymentLink.amount)) > 0.0000001
+      ) {
+        return res.status(400).json({
+          error: "Prepared transfer does not match this payment request.",
+        });
+      }
     }
     if (!signatures || typeof signatures !== "object") {
       return res.status(400).json({ error: "Missing field: signatures" });
@@ -1687,8 +1797,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       transactionId: prepared.transactionId,
       createdAt: new Date().toISOString(),
       callbackToken,
+      paymentLinkSlug: prepared.paymentLinkSlug,
       anchors: statusHandles,
     });
+    if (prepared.paymentLinkSlug) {
+      await startPaymentLink({
+        slug: prepared.paymentLinkSlug,
+        anchorTransactionId: prepared.transactionId,
+        anchorStatusRef: statusRef,
+        payerAccount: prepared.senderAccount,
+      });
+    }
 
     return res.status(200).json({
       status: "processing",
